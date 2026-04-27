@@ -13,7 +13,7 @@ https://177rvi-julia-arwari.shinyapps.io/glyphosate-dashboard/
 - Correlation heatmap with hover-based interpretation
 
 ## Data
-The original dataset this dashboard is based on is confidential and cannot be shared publicly. The data published here is a simulated version of the original dataset. The analysis is based on a subset of the I-KIDS prospective birth cohort (2012–2017).
+The original dataset this dashboard is based on is confidential and cannot be shared publicly. The data published here is a simulated version of the original dataset. 
 
 ## Public Health Importance
 Glyphosate is widely used, yet human evidence on prenatal glyphosate and AMPA exposure in relation to oxidative stress during pregnancy remains limited. This dashboard helps communicate whether exposure patterns are associated with oxidative stress biomarkers and supports continued investigation into potential biological effects during a sensitive developmental window.
