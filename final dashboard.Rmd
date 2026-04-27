@@ -1,0 +1,589 @@
+---
+title: "Prenatal Glyphosate, AMPA, and Oxidative Stress Biomarkers"
+output:
+  flexdashboard::flex_dashboard:
+    orientation: rows
+    vertical_layout: scroll
+    source_code: embed
+    theme: cosmo
+runtime: shiny
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, warning = FALSE, message = FALSE)
+
+library(shiny)
+library(flexdashboard)
+library(dplyr)
+library(tidyr)
+library(broom)
+library(forcats)
+library(plotly)
+library(htmltools)
+library(readxl)
+library(tidyverse)
+library(stringr)
+library(EnvStats)
+```
+
+```{css, echo=FALSE}
+.main-container, .container-fluid {
+  max-width: 100% !important;
+  width: 100% !important;
+}
+
+body {
+  font-size: 16px;
+}
+
+.navbar-brand {
+  font-weight: 700;
+}
+
+.section.level3 {
+  overflow-x: auto;
+}
+
+.plotly.html-widget {
+  max-width: 100%;
+}
+
+.small-note {
+  font-size: 0.95rem;
+  line-height: 1.45;
+  margin-top: 0.75rem;
+}
+
+.impact-box {
+  padding: 1rem;
+  border-radius: 10px;
+  background: #f7f7f7;
+  border-left: 4px solid #555;
+  margin-top: 1rem;
+}
+
+@media (max-width: 768px) {
+  body { font-size: 14px; }
+  .chart-title { font-size: 1.1rem; }
+  .control-label { font-size: 0.9rem; }
+}
+```
+
+```{r clean-data, include=FALSE}
+# Update this folder path if your data are stored somewhere else.
+data_dir <- "~/Desktop/ILE/Glyphosate project"
+
+glyphosate <- read_excel("~/Desktop/ILE/Glyphosate project/IKIDS_Glyphosate.xlsx")
+oxstress <- read_excel("~/Desktop/ILE/Glyphosate project/IKIDS_oxidative_stress.xlsx")
+demographics <- read.csv("~/Desktop/ILE/Glyphosate project/ECHO.CA.IL_Combined_Data.csv")
+
+demographics <- demographics |>
+  mutate(ppt_id = str_remove(ppt_id, "^3")) |>
+  filter(study == "IKIDS") |>
+  select(
+    ppt_id,
+    mat_age,
+    parity,
+    ppbmi,
+    bmi_cat,
+    marital,
+    mat_race_eth,
+    mat_educ,
+    employ,
+    sex,
+    best_edd
+  ) |>
+  mutate(
+    bmi_cat = if_else(bmi_cat == 1, 2, bmi_cat),
+    marital = if_else(marital == 3, 2, marital),
+    mat_race_eth = case_when(
+      mat_race_eth %in% c(3, 4, 5) ~ 2,
+      TRUE ~ mat_race_eth
+    )
+  )
+
+merged <- demographics |>
+  mutate(ppt_id = as.character(ppt_id)) |>
+  inner_join(oxstress |> mutate(ppt_id = as.character(ppt_id)), by = "ppt_id") |>
+  inner_join(
+    glyphosate |>
+      rename(ppt_id = ID) |>
+      mutate(ppt_id = as.character(ppt_id)),
+    by = "ppt_id"
+  ) |>
+  mutate(
+    log.iso_sg_avg = log(iso_sg_avg),
+    log.isom_sg_avg = log(isom_sg_avg),
+    log.isom_new_sg_avg = log(isom_new_sg_avg),
+    log.pgf_sg_avg = log(pgf_sg_avg),
+    log.iso_chem_sg_avg = log(iso_chem_sg_avg),
+    log.iso_enz_sg_avg = log(iso_enz_sg_avg),
+    log_Glyphosate_PA_SG = log(Glyphosate_PA_SG),
+    ampa_constant = AMPA_PA_SG + 0.0001,
+    log_AMPA_PA_SG = log(ampa_constant),
+    glyph.iqr = log_Glyphosate_PA_SG / iqr(log_Glyphosate_PA_SG, na.rm = TRUE),
+    ampa.iqr = log_AMPA_PA_SG / iqr(log_AMPA_PA_SG, na.rm = TRUE)
+  )
+
+merged$glyph_tertile <- cut(
+  merged$Glyphosate_PA_SG,
+  breaks = quantile(merged$Glyphosate_PA_SG, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+  include.lowest = TRUE,
+  labels = c("Low", "Medium", "High")
+)
+
+merged$ampa_tertile <- cut(
+  merged$AMPA_PA_SG,
+  breaks = quantile(merged$AMPA_PA_SG, probs = c(0, 1/3, 2/3, 1), na.rm = TRUE),
+  include.lowest = TRUE,
+  labels = c("Low", "Medium", "High")
+)
+
+merged$glyph_tertile <- relevel(merged$glyph_tertile, ref = "Low")
+merged$ampa_tertile  <- relevel(merged$ampa_tertile,  ref = "Low")
+```
+
+```{r helper-functions, include=FALSE}
+rename_outcomes <- function(df) {
+  df %>%
+    mutate(
+      outcome = recode(
+        outcome,
+        "log.iso_sg_avg"      = "8-iso-PGF2α",
+        "log.isom_sg_avg"     = "2,3-dinor-5,6-dihydro-8-iso-PGF2α",
+        "log.isom_new_sg_avg" = "2,3-dinor-8-iso-PGF2α",
+        "log.pgf_sg_avg"      = "PGF2α"
+      )
+    )
+}
+
+run_exposure_results <- function(data, exposure, exposure_label, tertile_labels) {
+  outcome_vars <- c(
+    "log.iso_sg_avg",
+    "log.isom_sg_avg",
+    "log.isom_new_sg_avg",
+    "log.pgf_sg_avg"
+  )
+
+  run_iqr <- function(outcome_var) {
+    fit <- lm(
+      as.formula(
+        paste0(
+          outcome_var,
+          " ~ ", exposure, ".iqr + mat_age + ppbmi + AHEI_WGRAINS_PA + as.factor(mat_educ)"
+        )
+      ),
+      data = data
+    )
+
+    tidy(fit, conf.int = TRUE) %>%
+      filter(term == paste0(exposure, ".iqr")) %>%
+      mutate(
+        outcome = outcome_var,
+        metric = "IQR increase",
+        exposure_type = exposure_label
+      )
+  }
+
+  run_tert <- function(outcome_var) {
+    fit <- lm(
+      as.formula(
+        paste0(
+          outcome_var,
+          " ~ ", exposure, "_tertile + mat_age + ppbmi + AHEI_WGRAINS_PA + as.factor(mat_educ)"
+        )
+      ),
+      data = data
+    )
+
+    tidy(fit, conf.int = TRUE) %>%
+      filter(grepl(paste0("^", exposure, "_tertile"), term)) %>%
+      mutate(
+        outcome = outcome_var,
+        exposure_type = exposure_label
+      )
+  }
+
+  iqr_res <- bind_rows(lapply(outcome_vars, run_iqr))
+  tert_res <- bind_rows(lapply(outcome_vars, run_tert))
+
+  tert_clean <- tert_res %>%
+    mutate(
+      metric = case_when(
+        grepl("Medium$", term) ~ tertile_labels[2],
+        grepl("High$", term)   ~ tertile_labels[3],
+        TRUE                   ~ NA_character_
+      )
+    )
+
+  ref_rows <- lapply(outcome_vars, function(outcome_var) {
+    tibble(
+      term = paste0(exposure, "_tertileLow"),
+      estimate = 0,
+      std.error = NA_real_,
+      statistic = NA_real_,
+      p.value = NA_real_,
+      conf.low = 0,
+      conf.high = 0,
+      outcome = outcome_var,
+      metric = tertile_labels[1],
+      exposure_type = exposure_label
+    )
+  }) %>% bind_rows()
+
+  bind_rows(iqr_res, tert_clean, ref_rows) %>%
+    rename_outcomes() %>%
+    mutate(
+      outcome = factor(
+        outcome,
+        levels = c(
+          "8-iso-PGF2α",
+          "2,3-dinor-5,6-dihydro-8-iso-PGF2α",
+          "2,3-dinor-8-iso-PGF2α",
+          "PGF2α"
+        )
+      ),
+      metric = factor(metric, levels = c("IQR increase", tertile_labels))
+    )
+}
+
+glyph_labels <- c(
+  "T1: ≤ 0.074 ng/mL",
+  "T2: 0.075–0.233<br>ng/mL",
+  "T3: > 0.233 ng/mL"
+)
+
+ampa_labels <- c(
+  "T1: ≤ 0.022 ng/mL",
+  "T2: 0.023–0.073<br>ng/mL",
+  "T3: > 0.073 ng/mL"
+)
+
+glyph_results <- run_exposure_results(merged, "glyph", "Glyphosate", glyph_labels)
+ampa_results <- run_exposure_results(merged, "ampa", "AMPA", ampa_labels)
+
+plotdf_all <- bind_rows(glyph_results, ampa_results) %>%
+  mutate(
+    hover_text = paste0(
+      "<b>Exposure:</b> ", exposure_type,
+      "<br><b>Biomarker:</b> ", outcome,
+      "<br><b>Metric:</b> ", metric,
+      "<br><b>Beta:</b> ", sprintf("%.3f", estimate),
+      "<br><b>95% CI:</b> ", sprintf("%.3f", conf.low), " to ", sprintf("%.3f", conf.high)
+    )
+  )
+```
+
+Overview {data-navmenu="About"}
+=====================================
+
+Row
+-------------------------------------
+### Dashboard guide
+
+Use the [**Adjusted Associations**](#adjusted-associations) tab to explore linear regression results adjusted for age, diet, pre-pregnancy BMI, and education for each exposure and biomarker. You can filter by exposure type to compare patterns across biomarkers and hover over points to view the exact beta coefficient and confidence interval. Use the [**Correlation Heatmap**](#correlation-heatmap) tab to compare pairwise Pearson correlations among glyphosate, AMPA, and oxidative stress biomarkers. Hover over each figure for rounded estimates and labels.
+
+### Dataset description
+
+This dashboard uses data from the Illinois Kids Development Study (I-KIDS), a prospective birth cohort examining prenatal environmental exposures and child health outcomes. The analytic dataset includes 161 participants with linked urinary measurements of glyphosate and AMPA collected during early pregnancy and oxidative stress biomarkers measured in the second and/or third trimester. Data were collected between 2012 and 2017 from pregnant individuals in Champaign-Urbana, Illinois, with biospecimens obtained through clinical collection and analyzed using laboratory-based methods. Biomarkers were specific gravity corrected and natural log transformed prior to analysis. These data are confidential and not publicly available.
+
+### Why this matters
+
+Glyphosate is widely used, yet human evidence on prenatal glyphosate and AMPA exposure in relation to oxidative stress during pregnancy remains limited. This dashboard helps communicate whether exposure patterns are associated with oxidative stress biomarkers and supports continued investigation into potential biological effects during a sensitive developmental window.
+
+
+<style>
+.filter-container {
+  display: flex;
+  justify-content: center;
+  gap: 1rem;
+  margin: 0.15rem 0 0.25rem 0;
+  flex-wrap: wrap;
+}
+
+.filter-box-small {
+  width: 230px;
+}
+
+.filter-box-small label {
+  font-size: 12px;
+  margin-bottom: 2px;
+}
+
+.filter-box-small .form-control {
+  height: 34px;
+  font-size: 13px;
+  padding: 3px 8px;
+}
+
+.chart-wrapper {
+  margin-bottom: 6px;
+}
+
+.takeaway-box {
+  margin-top: 4px;
+  padding: 12px 16px;
+  background-color: #f8f9fa;
+  border-left: 5px solid #2c7fb8;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.4;
+}
+</style>
+
+Adjusted Associations
+=====================================
+
+Column {data-width=1000}
+-------------------------------------
+
+### Adjusted Associations between Glyphosate or AMPA and Oxidative Stress Biomarkers
+
+```{r controls}
+div(
+  class = "filter-container",
+  div(
+    class = "filter-box-small",
+    selectInput(
+      "exposure_filter",
+      "Exposure",
+      choices = c("Glyphosate", "AMPA"),
+      selected = "Glyphosate"
+    )
+  ),
+  div(
+    class = "filter-box-small",
+    selectInput(
+      "biomarker_filter",
+      "Biomarker",
+      choices = c(
+        "All",
+        "8-iso-PGF2α",
+        "2,3-dinor-5,6-dihydro-8-iso-PGF2α",
+        "2,3-dinor-8-iso-PGF2α",
+        "PGF2α"
+      ),
+      selected = "All"
+    )
+  )
+)
+```
+
+```{r widget1-plot}
+div(
+  class = "chart-wrapper",
+  plotlyOutput("widget1_plot", width = "100%", height = "500px")
+)
+
+output$widget1_plot <- renderPlotly({
+
+  df <- plotdf_all %>%
+    filter(exposure_type == input$exposure_filter)
+
+  if (input$biomarker_filter != "All") {
+    df <- df %>% filter(outcome == input$biomarker_filter)
+  }
+
+  validate(need(nrow(df) > 0, "No data available."))
+
+  metric_levels <- if (input$exposure_filter == "Glyphosate") {
+    c("IQR increase", glyph_labels)
+  } else {
+    c("IQR increase", ampa_labels)
+  }
+
+  df <- df %>%
+    mutate(
+      metric = factor(metric, levels = rev(metric_levels)),
+      outcome = factor(
+        outcome,
+        levels = c(
+          "8-iso-PGF2α",
+          "2,3-dinor-5,6-dihydro-8-iso-PGF2α",
+          "2,3-dinor-8-iso-PGF2α",
+          "PGF2α"
+        )
+      )
+    )
+# set color based on exposure
+line_color <- ifelse(input$exposure_filter == "Glyphosate", "#1b9e77", "#d95f02")
+
+  p <- ggplot(
+    df,
+    aes(
+      x = estimate,
+      y = metric,
+      text = hover_text
+    )
+  ) +
+    geom_vline(xintercept = 0, linetype = "dashed", linewidth = 0.5) +
+geom_errorbarh(
+  aes(xmin = conf.low, xmax = conf.high),
+  height = 0.15,
+  linewidth = 0.8,
+  color = line_color
+) +
+geom_point(size = 3, color = line_color) +
+    facet_wrap(~ outcome, nrow = 1, scales = "free_x") +
+    labs(
+      title = input$exposure_filter,
+      x = "Beta coefficient (95% CI)",
+      y = NULL
+    ) +
+    theme_minimal(base_size = 14) +
+    theme(
+      plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
+      strip.text = element_text(face = "bold", size = 13),
+      axis.text.y = element_text(size = 11),
+      axis.text.x = element_text(size = 10),
+      axis.title.x = element_text(size = 12, margin = margin(t = 12)),
+      panel.spacing = unit(1.4, "lines"),
+      plot.margin = margin(15, 20, 35, 20)
+    )
+
+  ggplotly(p, tooltip = "text") %>%
+    layout(
+      autosize = TRUE,
+      margin = list(l = 90, r = 40, b = 120, t = 70)
+    ) %>%
+    config(responsive = TRUE, displayModeBar = TRUE)
+})
+```
+
+<div class="takeaway-box">
+<strong>Key takeaways:</strong> Overall, the forest plots suggest limited evidence of consistent associations between glyphosate or AMPA exposure and oxidative stress biomarkers, with most estimates centered near the null and wide confidence intervals. While some variability is observed across exposure tertiles and biomarkers, findings are largely null, supporting the need for continued investigation into potential biological effects during pregnancy.
+</div>
+
+Correlation Heatmap
+=====================================
+
+Column {data-width=1000}
+-------------------------------------
+
+### Pearson correlations among exposures and oxidative stress biomarkers
+
+```{r widget2-data, include=FALSE}
+corr_data <- merged %>%
+  select(
+    Glyphosate = log_Glyphosate_PA_SG,
+    AMPA = log_AMPA_PA_SG,
+    `8-iso-PGF2α` = log.iso_sg_avg,
+    `2,3-dinor-5,6-dihydro-8-iso-PGF2α` = log.isom_sg_avg,
+    `2,3-dinor-8-iso-PGF2α` = log.isom_new_sg_avg,
+    PGF2α = log.pgf_sg_avg
+  ) %>%
+  filter(complete.cases(.))
+
+corr_matrix <- cor(corr_data, method = "pearson")
+var_names <- colnames(corr_matrix)
+n_vars <- length(var_names)
+
+x_labels_wrapped <- c(
+  "Glyphosate",
+  "AMPA",
+  "8-iso-PGF2α",
+  "2,3-dinor-5,6-dihydro-<br>8-iso-PGF2α",
+  "2,3-dinor-8-iso-PGF2α",
+  "PGF2α"
+)
+
+get_strength <- function(r) {
+  abs_r <- abs(r)
+  dplyr::case_when(
+    abs_r >= 0.80 ~ "Very strong",
+    abs_r >= 0.60 ~ "Strong",
+    abs_r >= 0.40 ~ "Moderate",
+    abs_r >= 0.20 ~ "Weak",
+    TRUE ~ "Very weak"
+  )
+}
+
+z_mat <- corr_matrix
+text_mat <- matrix("", nrow = n_vars, ncol = n_vars)
+
+for (i in seq_len(n_vars)) {
+  for (j in seq_len(n_vars)) {
+    if (i < j) {
+      z_mat[i, j] <- NA
+      text_mat[i, j] <- ""
+    } else {
+      r_val <- corr_matrix[i, j]
+      text_mat[i, j] <- paste0(
+        "<b>Variable 1:</b> ", var_names[j],
+        "<br><b>Variable 2:</b> ", var_names[i],
+        "<br><b>Pearson r:</b> ", sprintf("%.2f", r_val),
+        "<br><b>Relationship strength:</b> ", get_strength(r_val)
+      )
+    }
+  }
+}
+
+z_plot <- z_mat[nrow(z_mat):1, ]
+text_plot <- text_mat[nrow(text_mat):1, ]
+y_labels <- rev(var_names)
+x_labels <- var_names
+```
+
+```{r widget2-plot}
+div(
+  class = "chart-wrapper",
+  plotlyOutput("widget2_plot", width = "100%", height = "500px")
+)
+
+output$widget2_plot <- renderPlotly({
+  plot_ly(
+    x = x_labels,
+    y = y_labels,
+    z = z_plot,
+    text = text_plot,
+    type = "heatmap",
+    hovertemplate = "%{text}<extra></extra>",
+    zmin = -1,
+    zmax = 1,
+    showscale = TRUE,
+    colorbar = list(
+      title = list(text = "Pearson r", side = "top"),
+      tickvals = c(-1, -0.5, 0, 0.5, 1),
+      ticktext = c("-1.0", "-0.5", "0", "0.5", "1.0"),
+      len = 0.70,
+      thickness = 18,
+      x = 1.03
+    ),
+    xgap = 2,
+    ygap = 2
+  ) %>%
+    layout(
+      title = list(
+        text = "<b>Pearson Correlations Among Exposures and Oxidative Stress Biomarkers</b>",
+        x = 0.5,
+        xanchor = "center",
+        font = list(size = 18)
+      ),
+      xaxis = list(
+        title = "",
+        side = "bottom",
+        tickmode = "array",
+        tickvals = x_labels,
+        ticktext = x_labels_wrapped,
+        tickangle = 0,
+        tickfont = list(size = 12),
+        automargin = TRUE
+      ),
+      yaxis = list(
+        title = "",
+        tickfont = list(size = 13),
+        automargin = TRUE
+      ),
+      margin = list(l = 220, r = 90, b = 115, t = 80),
+      paper_bgcolor = "white",
+      plot_bgcolor = "white"
+    ) %>%
+    config(responsive = TRUE, displayModeBar = TRUE)
+})
+```
+
+<div class="takeaway-box">
+<strong>Key takeaways:</strong> The heatmap suggests that correlations among glyphosate, AMPA, and oxidative stress biomarkers are weak to moderate in magnitude, with no clear evidence of very strong pairwise relationships.
+</div>
+
+
