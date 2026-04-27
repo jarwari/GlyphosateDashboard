@@ -104,6 +104,57 @@ body {
   .chart-title { font-size: 1.1rem; }
   .control-label { font-size: 0.9rem; }
 }
+@media (max-width: 768px) {
+  .filter-box-small {
+    width: 90%;
+  }
+
+  .chart-wrapper {
+    overflow-x: auto;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .plotly.html-widget {
+    min-width: 850px;
+  }
+
+  .takeaway-box {
+    font-size: 13px;
+  }
+}
+@media (max-width: 768px) {
+
+  /* shrink facet titles (biomarker names) */
+  .plotly .gtitle {
+    font-size: 12px !important;
+  }
+
+  /* shrink axis labels */
+  .plotly .xtick text,
+  .plotly .ytick text {
+    font-size: 10px !important;
+  }
+
+  /* reduce subplot spacing */
+  .plotly .subplot {
+    padding: 5px !important;
+  }
+
+  /* give more bottom space so x-axis doesn't overlap */
+  .plotly .cartesianlayer {
+    margin-bottom: 20px !important;
+  }
+}
+.mobile-scroll-chart {
+  width: 100%;
+  overflow-x: auto;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
+}
+
+.mobile-scroll-chart .plotly {
+  min-width: 1050px;
+}
 ```
 
 ```{r clean-data, include=FALSE}
@@ -386,8 +437,8 @@ div(
 
 ```{r widget1-plot}
 div(
-  class = "chart-wrapper",
-  plotlyOutput("widget1_plot", width = "100%", height = "500px")
+  class = "mobile-scroll-chart",
+  plotlyOutput("widget1_plot", width = "1050px", height = "500px")
 )
 
 output$widget1_plot <- renderPlotly({
@@ -448,7 +499,7 @@ output$widget1_plot <- renderPlotly({
     theme_minimal(base_size = 14) +
     theme(
       plot.title = element_text(face = "bold", size = 20, hjust = 0.5),
-      strip.text = element_text(face = "bold", size = 13),
+      strip.text = element_text(face = "bold", size = 11),
       axis.text.y = element_text(size = 11),
       axis.text.x = element_text(size = 10),
       axis.title.x = element_text(size = 12, margin = margin(t = 12)),
@@ -459,14 +510,14 @@ output$widget1_plot <- renderPlotly({
   ggplotly(p, tooltip = "text") %>%
     layout(
       autosize = TRUE,
-      margin = list(l = 90, r = 40, b = 120, t = 70)
+      margin = list(l = 90, r = 40, b = 140, t = 70)
     ) %>%
-    config(responsive = TRUE, displayModeBar = TRUE)
+    config(responsive = FALSE, displayModeBar = TRUE)
 })
 ```
 
 <div class="takeaway-box">
-<strong>Key takeaways:</strong> Overall, the forest plots suggest limited evidence of consistent associations between glyphosate or AMPA exposure and oxidative stress biomarkers, with most estimates centered near the null and wide confidence intervals. While some variability is observed across exposure tertiles and biomarkers, findings are largely null, supporting the need for continued investigation into potential biological effects during pregnancy.
+<strong>Key takeaways:</strong> Using the simulated dataset, there were some negative, significant associations between AMPA and 2,3-dinor-5,6-dihydro-8-iso-PGF2α; however, this association is not present while using the original dataset. Overall, the forest plots suggest limited evidence of consistent associations between glyphosate or AMPA exposure and oxidative stress biomarkers, with most estimates centered near the null and wide confidence intervals. While some variability is observed across exposure tertiles and biomarkers, findings are largely null, supporting the need for continued investigation into potential biological effects during pregnancy. 
 </div>
 
 Correlation Heatmap
